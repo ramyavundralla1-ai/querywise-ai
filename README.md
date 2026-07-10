@@ -45,7 +45,7 @@
 
 ## 🧠 Overview
 
-**QueryWise AI** is a modern, open-source data copilot that lets you ask questions about your data in plain English and get instant SQL-powered answers. Upload a CSV, TSV, or Parquet file, type a question — and QueryWise translates it into SQL, executes it against DuckDB, and returns a clean, structured answer with cost and complexity metadata.
+**QueryWise AI** is a modern, open-source data copilot that lets you ask questions about your data in plain English and get instant SQL-powered answers. Upload a CSV, TSV, or Parquet file, type a question, and get back structured results with cost transparency and SQL explanations.
 
 Built for the **2025 International AI Hackathon**, QueryWise demonstrates how large language models combined with an embedded analytical database can democratise data access for non-technical users.
 
@@ -71,55 +71,15 @@ Built for the **2025 International AI Hackathon**, QueryWise demonstrates how la
 
 ## 🏗 Architecture
 
-```mermaid
-flowchart TB
-    subgraph Frontend["Frontend (React + Vite)"]
-        UI[Dashboard UI<br/>React 18 + TypeScript]
-        CHAT[Chat Interface<br/>Conversational UX]
-        UPLOAD[Upload Modal<br/>Drag-and-Drop]
-        API[API Service Layer<br/>Type-safe client]
-    end
+### Components
 
-    subgraph Backend["Backend (FastAPI / Python)"]
-        R[Router<br/>REST Endpoints]
-        LLM_ENGINE[NL→SQL Engine<br/>Gemma via Fireworks AI]
-        FALLBACK[Fallback Engine<br/>50+ SQL Patterns]
-        SCHEMA[Schema Resolver<br/>Column Matching]
-    end
-
-    subgraph Database["Database Layer"]
-        DUCKDB[(DuckDB<br/>Embedded Analytics)]
-        CSV[(Uploaded Files<br/>CSV / TSV / Parquet)]
-    end
-
-    %% Frontend → Backend
-    UI -->|HTTP / JSON| API
-    API -->|fetch()| R
-
-    %% Backend routing
-    R --> LLM_ENGINE
-    R --> FALLBACK
-    R --> SCHEMA
-
-    %% Database interactions
-    LLM_ENGINE -->|SQL| DUCKDB
-    FALLBACK -->|SQL| DUCKDB
-    SCHEMA -->|Introspection| DUCKDB
-    DUCKDB -->|Imports| CSV
-
-    %% Response flow
-    DUCKDB -->|Result Sets| R
-    R -->|JSON Response| API
-    API --> UI
-
-    %% Styling
-    classDef frontend fill:#1e293b,stroke:#3b82f6,stroke-width:2px,color:#f8fafc
-    classDef backend fill:#1e293b,stroke:#06b6d4,stroke-width:2px,color:#f8fafc
-    classDef db fill:#1e293b,stroke:#22c55e,stroke-width:2px,color:#f8fafc
-    class UI,CHAT,UPLOAD,API frontend
-    class R,LLM_ENGINE,FALLBACK,SCHEMA backend
-    class DUCKDB,CSV db
-```
+| Layer | Technology | Purpose |
+|-------|-----------|---------|
+| **Frontend** | React 18 + TypeScript + Vite | Dashboard & Chat UI |
+| **Backend** | FastAPI + Python 3.12 | REST API & SQL Generation |
+| **Database** | DuckDB | Embedded Analytics Engine |
+| **LLM Integration** | Fireworks AI (Gemma-2) | Natural Language to SQL |
+| **Fallback Engine** | Pattern Matcher | Offline SQL Generation |
 
 ### Request Flow
 
@@ -129,6 +89,34 @@ flowchart TB
 4. **SQL is generated** — via Fireworks AI Gemma model (online) or pattern matcher (offline)
 5. **SQL is executed** against DuckDB → results returned with metadata
 6. **Frontend renders** the answer with SQL block, complexity badge, cost savings, and explanation
+
+### Architecture Diagram
+
+```
+┌─────────────────────────────────────┐
+│   Frontend (React + TypeScript)     │
+│  - Dashboard UI                     │
+│  - Chat Interface                   │
+│  - Upload Modal                     │
+│  - API Service Layer                │
+└──────────────┬──────────────────────┘
+               │ HTTP / JSON
+               ▼
+┌─────────────────────────────────────┐
+│   Backend (FastAPI / Python)        │
+│  - Router (REST Endpoints)          │
+│  - NL→SQL Engine (Fireworks AI)     │
+│  - Fallback Engine (50+ Patterns)   │
+│  - Schema Resolver                  │
+└──────────────┬──────────────────────┘
+               │ SQL
+               ▼
+┌─────────────────────────────────────┐
+│   Database Layer                    │
+│  - DuckDB (Embedded Analytics)      │
+│  - Uploaded Files (CSV/TSV/Parquet) │
+└─────────────────────────────────────┘
+```
 
 ---
 
