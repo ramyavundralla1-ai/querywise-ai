@@ -5,9 +5,10 @@ import ChatInterface from "./components/ChatInterface";
 import UploadModal from "./components/UploadModal";
 import HistoryPage from "./components/HistoryPage";
 import AboutPage from "./components/AboutPage";
+import HackathonBanner from "./components/HackathonBanner";
 import type { UploadResponse } from "./services/api";
 
-export type View = "dashboard" | "chat" | "history" | "about";
+export type View = "dashboard" | "chat" | "history" | "about" | "banner";
 
 export interface QueryHistoryItem {
   id: string;
@@ -99,6 +100,11 @@ export default function App() {
           />
         )}
         {currentView === "about" && <AboutPage />}
+        {currentView === "banner" && (
+          <div className="flex-1 flex items-center justify-center bg-[#060b1e]">
+            <HackathonBanner />
+          </div>
+        )}
       </main>
 
       {showUploadModal && (

@@ -6,6 +6,7 @@ import {
   MessageSquare,
   History,
   Info,
+  Image,
   Upload,
   ChevronLeft,
   ChevronRight,
@@ -22,6 +23,7 @@ const navItems: { view: View; label: string; icon: typeof LayoutDashboard }[] = 
   { view: "chat", label: "Chat Assistant", icon: MessageSquare },
   { view: "history", label: "Query History", icon: History },
   { view: "about", label: "About QueryWise", icon: Info },
+  { view: "banner", label: "Pitch Banner", icon: Image },
 ];
 
 export default function Sidebar({ activePage, onNavigate, onUploadClick }: SidebarProps) {
