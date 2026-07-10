@@ -1,0 +1,45 @@
+# ── Version control ───────────────────────────────────
+.git
+.gitignore
+.gitattributes
+
+# ── Dependencies (installed inside containers) ───────
+node_modules
+backend/__pycache__
+backend/*.pyc
+backend/.venv
+backend/venv
+__pycache__
+
+# ── Build artifacts ──────────────────────────────────
+dist
+dist-ssr
+*.local
+
+# ── Data (persistent volume) ─────────────────────────
+data/
+*.duckdb
+*.duckdb.wal
+
+# ── Environment files (contain secrets) ──────────────
+.env
+.env.local
+.env.production
+backend/.env
+
+# ── IDE / Editor ─────────────────────────────────────
+.vscode
+.idea
+*.swp
+*.swo
+*~
+.DS_Store
+
+# ── Logs ─────────────────────────────────────────────
+logs
+*.log
+npm-debug.log*
+
+# ── OS files ─────────────────────────────────────────
+Thumbs.db
+.DS_Store
