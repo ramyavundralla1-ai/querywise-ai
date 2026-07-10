@@ -72,52 +72,44 @@ Built for the **2025 International AI Hackathon**, QueryWise demonstrates how la
 ## 🏗 Architecture
 
 ```mermaid
-flowchart TB
+flowchart LR
     subgraph Frontend["Frontend (React + Vite)"]
-        UI[Dashboard UI<br/>React 18 + TypeScript]
-        CHAT[Chat Interface<br/>Conversational UX]
-        UPLOAD[Upload Modal<br/>Drag-and-Drop]
-        API[API Service Layer<br/>Type-safe client]
+        UI["Dashboard UI<br/>React 18 + TypeScript"]
+        CHAT["Chat Interface<br/>Conversational UX"]
+        UPLOAD["Upload Modal<br/>Drag-and-Drop"]
+        API["API Service Layer<br/>Type-safe client"]
     end
 
     subgraph Backend["Backend (FastAPI / Python)"]
-        R[Router<br/>REST Endpoints]
-        LLM_ENGINE[NL→SQL Engine<br/>Gemma via Fireworks AI]
-        FALLBACK[Fallback Engine<br/>50+ SQL Patterns]
-        SCHEMA[Schema Resolver<br/>Column Matching]
+        R["Router<br/>REST Endpoints"]
+        NL_ENGINE["NL to SQL Engine<br/>Gemma via Fireworks AI"]
+        FALLBACK["Fallback Engine<br/>50+ SQL Patterns"]
+        SCHEMA["Schema Resolver<br/>Column Matching"]
     end
 
     subgraph Database["Database Layer"]
-        DUCKDB[(DuckDB<br/>Embedded Analytics)]
-        CSV[(Uploaded Files<br/>CSV / TSV / Parquet)]
+        DUCKDB[("DuckDB<br/>Embedded Analytics")]
+        CSV[("Uploaded Files<br/>CSV / TSV / Parquet")]
     end
 
-    %% Frontend → Backend
-    UI -->|HTTP / JSON| API
-    API -->|fetch()| R
-
-    %% Backend routing
-    R --> LLM_ENGINE
+    UI -->|"HTTP / JSON"| API
+    API -->|"fetch()"| R
+    R --> NL_ENGINE
     R --> FALLBACK
     R --> SCHEMA
-
-    %% Database interactions
-    LLM_ENGINE -->|SQL| DUCKDB
-    FALLBACK -->|SQL| DUCKDB
-    SCHEMA -->|Introspection| DUCKDB
-    DUCKDB -->|Imports| CSV
-
-    %% Response flow
-    DUCKDB -->|Result Sets| R
-    R -->|JSON Response| API
+    NL_ENGINE -->|"SQL"| DUCKDB
+    FALLBACK -->|"SQL"| DUCKDB
+    SCHEMA -->|"Introspection"| DUCKDB
+    DUCKDB -->|"Imports"| CSV
+    DUCKDB -->|"Result Sets"| R
+    R -->|"JSON Response"| API
     API --> UI
 
-    %% Styling
     classDef frontend fill:#1e293b,stroke:#3b82f6,stroke-width:2px,color:#f8fafc
     classDef backend fill:#1e293b,stroke:#06b6d4,stroke-width:2px,color:#f8fafc
     classDef db fill:#1e293b,stroke:#22c55e,stroke-width:2px,color:#f8fafc
     class UI,CHAT,UPLOAD,API frontend
-    class R,LLM_ENGINE,FALLBACK,SCHEMA backend
+    class R,NL_ENGINE,FALLBACK,SCHEMA backend
     class DUCKDB,CSV db
 ```
 
