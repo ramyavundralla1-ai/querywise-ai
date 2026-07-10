@@ -1,150 +1,75 @@
-import { BrainIcon, HomeIcon, MessageIcon, HistoryIcon, UploadIcon, DatabaseIcon, SparklesIcon, DollarIcon, ChevronRightIcon, RouteIcon } from "./Icons";
-
-type NavPage = "dashboard" | "chat";
+import type { View } from "../App";
+import { SiGithub } from "react-icons/si";
+import {
+  LayoutDashboard,
+  MessageSquare,
+  History,
+  Info,
+  Upload,
+} from "lucide-react";
 
 interface SidebarProps {
-  activePage: NavPage;
-  onNavigate: (page: NavPage) => void;
+  activePage: View;
+  onNavigate: (view: View) => void;
   onUploadClick: () => void;
 }
 
+const navItems: { view: View; label: string; icon: typeof LayoutDashboard }[] = [
+  { view: "dashboard", label: "Dashboard", icon: LayoutDashboard },
+  { view: "chat", label: "Chat Assistant", icon: MessageSquare },
+  { view: "history", label: "Query History", icon: History },
+  { view: "about", label: "About QueryWise", icon: Info },
+];
+
 export default function Sidebar({ activePage, onNavigate, onUploadClick }: SidebarProps) {
-  const navItems = [
-    { id: "dashboard" as NavPage, label: "Dashboard", icon: HomeIcon },
-    { id: "chat" as NavPage, label: "Chat Assistant", icon: MessageIcon },
-  ];
-
-  const modelInfo = {
-    name: "GPT-4o",
-    provider: "OpenAI",
-    tokensUsed: 128_432,
-    estimatedCost: 0.64,
-    costSavings: 82,
-    complexity: "Medium",
-  };
-
   return (
-    <aside className="w-[260px] min-h-screen bg-surface border-r border-border flex flex-col flex-shrink-0">
+    <aside className="w-60 flex flex-col border-r border-border bg-elevated shrink-0">
       {/* Brand */}
-      <div className="px-5 py-6 border-b border-border">
-        <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded-lg bg-gradient-to-br from-primary to-secondary flex items-center justify-center">
-            <SparklesIcon className="w-5 h-5 text-white" />
-          </div>
-          <div>
-            <h1 className="text-base font-heading font-semibold text-foreground">QueryWise</h1>
-            <p className="text-[10px] text-foreground-muted tracking-wider uppercase">AI Data Copilot</p>
-          </div>
+      <div className="h-14 flex items-center gap-2.5 px-5 border-b border-border">
+        <div className="size-7 rounded-lg bg-primary flex items-center justify-center text-white text-xs font-bold">
+          QW
         </div>
+        <span className="font-semibold text-sm text-foreground">QueryWise AI</span>
       </div>
 
-      {/* Navigation */}
-      <nav className="px-3 pt-4 pb-2">
-        <p className="text-[10px] text-foreground-muted uppercase tracking-wider px-2 mb-2 font-medium">Navigation</p>
-        <div className="space-y-1">
-          {navItems.map((item) => {
-            const Icon = item.icon;
-            const isActive = activePage === item.id;
-            return (
-              <button
-                key={item.id}
-                onClick={() => onNavigate(item.id)}
-                className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-all duration-200 cursor-pointer ${
-                  isActive
-                    ? "bg-primary/15 text-primary font-medium"
-                    : "text-foreground-muted hover:text-foreground hover:bg-surface-card"
-                }`}
-              >
-                <Icon className={`w-4.5 h-4.5 ${isActive ? "text-primary" : ""}`} />
-                <span>{item.label}</span>
-                {isActive && (
-                  <div className="ml-auto w-1.5 h-1.5 rounded-full bg-primary" />
-                )}
-              </button>
-            );
-          })}
-        </div>
-      </nav>
+      {/* Nav */}
+      <nav className="flex-1 flex flex-col gap-1 p-3">
+        {navItems.map(({ view, label, icon: Icon }) => (
+          <button
+            key={view}
+            onClick={() => onNavigate(view)}
+            className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-150 ease-out active:scale-[0.98] ${
+              activePage === view
+                ? "bg-primary/10 text-primary shadow-sm"
+                : "text-muted hover:text-foreground hover:bg-surface/60"
+            }`}
+          >
+            <Icon size={18} strokeWidth={activePage === view ? 2.5 : 1.8} />
+            {label}
+          </button>
+        ))}
 
-      {/* Upload Button */}
-      <div className="px-3 pt-3">
+        {/* Upload */}
         <button
           onClick={onUploadClick}
-          className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-primary text-white rounded-lg text-sm font-medium hover:bg-primary-hover transition-all duration-200 active:scale-[0.97] cursor-pointer shadow-lg shadow-primary/20"
+          className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-150 ease-out active:scale-[0.98] text-muted hover:text-foreground hover:bg-surface/60 mt-1"
         >
-          <UploadIcon className="w-4 h-4" />
+          <Upload size={18} strokeWidth={1.8} />
           Upload Dataset
         </button>
-      </div>
-
-      {/* Model Info */}
-      <div className="flex-1 px-3 pt-6 pb-3 overflow-y-auto">
-        <p className="text-[10px] text-foreground-muted uppercase tracking-wider px-2 mb-2 font-medium">Session Info</p>
-        <div className="glass-card rounded-xl p-4 space-y-3.5">
-          {/* Model */}
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2 text-xs text-foreground-muted">
-              <BrainIcon className="w-3.5 h-3.5" />
-              <span>AI Model</span>
-            </div>
-            <span className="text-xs font-medium text-foreground">{modelInfo.name}</span>
-          </div>
-
-          {/* Divider */}
-          <div className="border-t border-border" />
-
-          {/* Token Usage */}
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2 text-xs text-foreground-muted">
-              <DatabaseIcon className="w-3.5 h-3.5" />
-              <span>Tokens Used</span>
-            </div>
-            <span className="text-xs font-mono text-foreground">{modelInfo.tokensUsed.toLocaleString()}</span>
-          </div>
-
-          {/* Cost */}
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2 text-xs text-foreground-muted">
-              <DollarIcon className="w-3.5 h-3.5" />
-              <span>Est. Cost</span>
-            </div>
-            <span className="text-xs font-mono font-medium text-foreground">${modelInfo.estimatedCost.toFixed(2)}</span>
-          </div>
-
-          {/* Savings */}
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2 text-xs text-foreground-muted">
-              <ChevronRightIcon className="w-3.5 h-3.5" />
-              <span>Cost Savings</span>
-            </div>
-            <span className="text-xs font-mono font-medium text-success">{modelInfo.costSavings}%</span>
-          </div>
-
-          {/* Complexity */}
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2 text-xs text-foreground-muted">
-              <RouteIcon className="w-3.5 h-3.5" />
-              <span>Complexity</span>
-            </div>
-            <span className="text-xs px-2 py-0.5 rounded-full bg-primary/10 text-primary font-medium">
-              {modelInfo.complexity}
-            </span>
-          </div>
-        </div>
-
-        {/* History Button */}
-        <button className="w-full mt-3 flex items-center gap-2 px-4 py-2.5 rounded-lg text-xs text-foreground-muted hover:text-foreground hover:bg-surface-card transition-all duration-200 cursor-pointer">
-          <HistoryIcon className="w-3.5 h-3.5" />
-          <span>View Chat History</span>
-          <ChevronRightIcon className="w-3 h-3 ml-auto" />
-        </button>
-      </div>
+      </nav>
 
       {/* Footer */}
-      <div className="px-5 py-3 border-t border-border">
-        <p className="text-[10px] text-foreground-muted/60 text-center">
-          QueryWise AI v1.0 · Powered by AI
-        </p>
+      <div className="p-3 border-t border-border">
+        <a
+          href="https://github.com"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-sm text-muted hover:text-foreground hover:bg-surface/60 transition-colors duration-150"
+        >
+          <SiGithub size={16} />
+          Source
+        </a>
       </div>
     </aside>
   );

@@ -1,93 +1,305 @@
-import { useState } from "react";
-import { SendIcon, SparklesIcon, SqlIcon, DollarIcon, RouteIcon, LightbulbIcon, CheckIcon, LoaderIcon, CloseIcon, MessageIcon, DatabaseIcon, BrainIcon } from "./Icons";
+import { useState, useEffect, useRef, useMemo } from "react";
+import { api, type QueryResponse, type UploadResponse } from "../services/api";
+import type { QueryHistoryItem } from "../App";
+import {
+  SendIcon, SqlIcon, RouteIcon, DollarIcon,
+  CheckIcon, LoaderIcon, CloseIcon, DatabaseIcon,
+  CopyIcon, DownloadIcon, CsvIcon, JsonIcon,
+  ExpandIcon, LightbulbIcon, TrendingUpIcon,
+  SparklesIcon,
+} from "./Icons";
 
-interface QueryResult {
+// ── Types ──────────────────────────────────────────────────
+
+interface FormattedResult {
   id: string;
   naturalQuery: string;
   generatedSql: string;
-  routingDecision: string;
-  costComparison: {
-    traditionalCost: number;
-    aiCost: number;
-  };
+  explanation: string;
+  routingLabel: string;
+  complexity: string;
+  executionTime: string;
+  rowsReturned: number;
+  estimatedTokens: number;
+  estimatedCost: number;
+  costSaved: number;
+  traditionalCost: number;
   columns: string[];
   rows: Record<string, string>[];
-  executionTime: string;
 }
 
-const exampleQuestions = [
-  "Show total sales by region for last quarter",
-  "Which products have the highest return rate?",
-  "Compare customer retention across subscription tiers",
-  "What's the average order value by customer segment?",
-  "List top 10 customers by lifetime value",
-  "Show monthly revenue trend for 2024",
+interface ChatInterfaceProps {
+  uploadedDataset: UploadResponse | null;
+  uploadVersion: number;
+  onSaveQuery: (item: QueryHistoryItem) => void;
+  initialQuestion: string;
+  onClearInitialQuestion: () => void;
+}
+
+// ── Suggested prompts ──────────────────────────────────────
+
+const SUGGESTED_PROMPTS = [
+  "How many orders are there?",
+  "Show total revenue by region",
+  "Top 5 customers by spending",
+  "Average order value",
+  "Monthly revenue trend",
+  "Show all customers",
 ];
 
-function generateMockResult(query: string, id: string): QueryResult {
+// ── Step loading states ────────────────────────────────────
+
+const LOADING_STEPS = [
+  "Thinking...",
+  "Generating SQL...",
+  "Executing Query...",
+  "Preparing Results...",
+];
+
+// ── SQL syntax highlighting helper ─────────────────────────
+
+const SQL_KEYWORDS = /\b(SELECT|FROM|WHERE|AND|OR|NOT|IN|LIKE|BETWEEN|IS|NULL|AS|ON|JOIN|LEFT|RIGHT|INNER|OUTER|CROSS|FULL|GROUP|BY|ORDER|HAVING|LIMIT|OFFSET|UNION|ALL|DISTINCT|COUNT|SUM|AVG|MIN|MAX|CASE|WHEN|THEN|ELSE|END|EXISTS|WITH|RECURSIVE|CAST|COALESCE|STRFTIME|DATE|UPPER|LOWER|TRIM|SUBSTR|REPLACE|ROUND|ABS)\b/gi;
+
+function highlightSql(sql: string): string {
+  return sql
+    .replace(/("([^"]|"")*"|'([^']|'')*')/g, '<span class="sql-string">$&</span>')
+    .replace(/\b(\d+(?:\.\d+)?)\b/g, '<span class="sql-number">$1</span>')
+    .replace(SQL_KEYWORDS, (match) => {
+      const isFn = /^(COUNT|SUM|AVG|MIN|MAX|COALESCE|STRFTIME|CAST|ROUND|UPPER|LOWER|TRIM|SUBSTR|REPLACE|ABS|DATE)$/i.test(match);
+      if (isFn) return `<span class="sql-function">${match.toUpperCase()}</span>`;
+      return `<span class="sql-keyword">${match.toUpperCase()}</span>`;
+    });
+}
+
+// ── Format helpers ─────────────────────────────────────────
+
+function formatQueryResponse(res: QueryResponse): FormattedResult {
+  const columns = res.result.length > 0 ? Object.keys(res.result[0]) : [];
+  const rows = res.result.map((row) => {
+    const formatted: Record<string, string> = {};
+    for (const [key, val] of Object.entries(row)) {
+      if (val == null) {
+        formatted[key] = "NULL";
+      } else if (typeof val === "number") {
+        // Round floating-point values to 2 decimal places
+        formatted[key] = Number.isInteger(val) ? String(val) : val.toFixed(2);
+      } else {
+        formatted[key] = String(val);
+      }
+    }
+    return formatted;
+  });
+
+  const engineLabel = res.selected_model
+    .replace(/fallback-pattern-matcher/i, "Smart Pattern Engine")
+    .replace(/^gemma/i, "Gemma AI");
+
   return {
-    id,
-    naturalQuery: query,
-    generatedSql: query.toLowerCase().includes("sales")
-      ? "SELECT region, SUM(sales_amount) AS total_sales\nFROM orders\nWHERE order_date >= DATEADD(month, -3, GETDATE())\nGROUP BY region\nORDER BY total_sales DESC;"
-      : query.toLowerCase().includes("product") || query.toLowerCase().includes("return")
-      ? "SELECT p.product_name, COUNT(r.return_id) * 1.0 / COUNT(o.order_id) AS return_rate\nFROM products p\nJOIN order_items oi ON p.product_id = oi.product_id\nJOIN orders o ON oi.order_id = o.order_id\nLEFT JOIN returns r ON oi.item_id = r.item_id\nGROUP BY p.product_name\nORDER BY return_rate DESC;"
-      : query.toLowerCase().includes("retention") || query.toLowerCase().includes("tier")
-      ? "WITH retention_data AS (\n  SELECT tier, \n    COUNT(DISTINCT customer_id) AS total_customers,\n    COUNT(DISTINCT CASE WHEN last_order_date > DATEADD(month, -6, GETDATE()) THEN customer_id END) AS active_customers\n  FROM subscriptions\n  GROUP BY tier\n)\nSELECT tier, total_customers, active_customers,\n  ROUND(active_customers * 100.0 / total_customers, 2) AS retention_rate\nFROM retention_data\nORDER BY retention_rate DESC;"
-      : query.toLowerCase().includes("order value") || query.toLowerCase().includes("segment")
-      ? "SELECT c.segment, AVG(o.total_amount) AS avg_order_value,\n  COUNT(o.order_id) AS total_orders\nFROM customers c\nJOIN orders o ON c.customer_id = o.customer_id\nGROUP BY c.segment\nORDER BY avg_order_value DESC;"
-      : query.toLowerCase().includes("customer")
-      ? "SELECT customer_id, customer_name, SUM(total_spent) AS lifetime_value\nFROM (\n  SELECT c.customer_id, c.customer_name, o.total_amount AS total_spent\n  FROM customers c\n  JOIN orders o ON c.customer_id = o.customer_id\n) AS customer_orders\nGROUP BY customer_id, customer_name\nORDER BY lifetime_value DESC\nLIMIT 10;"
-      : query.toLowerCase().includes("revenue") || query.toLowerCase().includes("trend")
-      ? "SELECT FORMAT(order_date, 'yyyy-MM') AS month, SUM(total_amount) AS revenue\nFROM orders\nWHERE YEAR(order_date) = 2024\nGROUP BY FORMAT(order_date, 'yyyy-MM')\nORDER BY month;"
-      : "SELECT * FROM dataset\nWHERE condition = 'example'\nLIMIT 10;",
-    routingDecision: Math.random() > 0.3 ? "GPT-4o (high complexity)" : "GPT-4o Mini (low complexity)",
-    costComparison: {
-      traditionalCost: parseFloat((Math.random() * 5 + 2).toFixed(2)),
-      aiCost: parseFloat((Math.random() * 0.8 + 0.05).toFixed(2)),
-    },
-    columns: ["region", "total_sales", "growth_percent"],
-    rows: [
-      { region: "North America", total_sales: "$1,284,392", growth_percent: "+12.4%" },
-      { region: "Europe", total_sales: "$892,451", growth_percent: "+8.7%" },
-      { region: "Asia Pacific", total_sales: "$654,283", growth_percent: "+15.2%" },
-      { region: "Latin America", total_sales: "$312,845", growth_percent: "+5.3%" },
-      { region: "Middle East", total_sales: "$198,472", growth_percent: "+22.1%" },
-    ],
-    executionTime: `${(Math.random() * 1.5 + 0.3).toFixed(1)}s`,
+    id: `res-${Date.now()}`,
+    naturalQuery: res.question,
+    generatedSql: res.generated_sql,
+    explanation: res.explanation || "Query generated by QueryWise Intelligent SQL Engine based on your natural language input.",
+    routingLabel: engineLabel,
+    complexity: res.complexity,
+    executionTime: res.execution_time,
+    rowsReturned: res.rows_returned,
+    estimatedTokens: res.estimated_tokens || 0,
+    estimatedCost: res.estimated_cost || 0,
+    costSaved: res.cost_saved || 0,
+    traditionalCost: parseFloat(((res.estimated_cost || 0) / (1 - (res.cost_saved || 0) / 100)).toFixed(2)),
+    columns,
+    rows,
   };
 }
 
-interface ChatInterfaceProps {}
+// ── Pagination component ───────────────────────────────────
 
-export default function ChatInterface({}: ChatInterfaceProps) {
+function Pagination({ current, total, onPage }: {
+  current: number;
+  total: number;
+  onPage: (n: number) => void;
+}) {
+  if (total <= 1) return null;
+  const pages: (number | string)[] = [];
+  const delta = 1;
+  const rangeStart = Math.max(2, current - delta);
+  const rangeEnd = Math.min(total - 1, current + delta);
+
+  pages.push(1);
+  if (rangeStart > 2) pages.push("...");
+  for (let i = rangeStart; i <= rangeEnd; i++) pages.push(i);
+  if (rangeEnd < total - 1) pages.push("...");
+  if (total > 1) pages.push(total);
+
+  return (
+    <div className="flex items-center gap-1 mt-3">
+      {pages.map((p, i) =>
+        typeof p === "string" ? (
+          <span key={`e${i}`} className="px-1 text-xs text-foreground-muted/50">…</span>
+        ) : (
+          <button
+            key={p}
+            onClick={() => onPage(p - 1)}
+            className={`min-w-[28px] h-7 rounded-md text-xs font-medium transition-all duration-150 cursor-pointer ${
+              p - 1 === current
+                ? "bg-primary text-white shadow-sm"
+                : "text-foreground-muted hover:text-foreground hover:bg-surface-elevated"
+            }`}
+          >
+            {p}
+          </button>
+        )
+      )}
+    </div>
+  );
+}
+
+// ── Export helpers ─────────────────────────────────────────
+
+function downloadCsv(columns: string[], rows: Record<string, string>[], filename: string) {
+  const header = columns.join(",");
+  const data = rows.map((r) => columns.map((c) => `"${(r[c] || "").replace(/"/g, '""')}"`).join(","));
+  const blob = new Blob([header, ...data].join("\n"), { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+function downloadJson(columns: string[], rows: Record<string, string>[], filename: string) {
+  const data = rows.map((r) => {
+    const obj: Record<string, string> = {};
+    columns.forEach((c) => { obj[c] = r[c] ?? ""; });
+    return obj;
+  });
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+async function copyToClipboard(text: string) {
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch {
+    // Fallback
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    ta.style.position = "fixed";
+    ta.style.opacity = "0";
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand("copy");
+    document.body.removeChild(ta);
+  }
+}
+
+// ── Main Component ─────────────────────────────────────────
+
+export default function ChatInterface({
+  uploadedDataset,
+  uploadVersion,
+  onSaveQuery,
+  initialQuestion,
+  onClearInitialQuestion,
+}: ChatInterfaceProps) {
   const [input, setInput] = useState("");
-  const [messages, setMessages] = useState<{ role: "user" | "assistant"; content: string; result?: QueryResult }[]>([]);
+  const [messages, setMessages] = useState<{ role: "user" | "assistant"; content: string; result?: FormattedResult }[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [loadingStep, setLoadingStep] = useState(0);
   const [expandedResult, setExpandedResult] = useState<string | null>(null);
+  const [expandedSql, setExpandedSql] = useState<Set<string>>(new Set());
+  const [copiedSql, setCopiedSql] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [tablePage, setTablePage] = useState<Record<string, number>>({});
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
 
-  const handleSend = async () => {
-    if (!input.trim() || isLoading) return;
+  const hasDataset = !!uploadedDataset;
 
-    const userMessage = input.trim();
-    setInput("");
-    setMessages((prev) => [...prev, { role: "user", content: userMessage }]);
+  // Auto-scroll to bottom
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages, isLoading]);
+
+  // Handle initial question from history
+  useEffect(() => {
+    if (initialQuestion) {
+      setInput("");
+      onClearInitialQuestion();
+      // Auto-execute
+      executeQuery(initialQuestion);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialQuestion]);
+
+  // Rotating loading steps
+  useEffect(() => {
+    if (!isLoading) {
+      setLoadingStep(0);
+      return;
+    }
+    const interval = setInterval(() => {
+      setLoadingStep((s) => (s + 1) % LOADING_STEPS.length);
+    }, 1500);
+    return () => clearInterval(interval);
+  }, [isLoading]);
+
+  const executeQuery = async (question: string) => {
+    setError(null);
     setIsLoading(true);
+    setMessages((prev) => [...prev, { role: "user", content: question }]);
 
-    // Simulate AI processing delay
-    await new Promise((r) => setTimeout(r, 1500));
+    try {
+      const res = await api.query({ question: question, table_name: uploadedDataset?.table_name });
+      const formatted = formatQueryResponse(res);
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: "assistant",
+          content: "",
+          result: formatted,
+        },
+      ]);
+      setExpandedResult(formatted.id);
 
-    const mockResult = generateMockResult(userMessage, `res-${Date.now()}`);
-    setMessages((prev) => [
-      ...prev,
-      {
-        role: "assistant",
-        content: `Here are the results for your query. I've analyzed the dataset and generated the optimal SQL for you.`,
-        result: mockResult,
-      },
-    ]);
-    setIsLoading(false);
-    setExpandedResult(mockResult.id);
+      // Save to history
+      onSaveQuery({
+        id: formatted.id,
+        question: formatted.naturalQuery,
+        sql: formatted.generatedSql,
+        executionTime: formatted.executionTime,
+        rowsReturned: formatted.rowsReturned,
+        engine: res.selected_model,
+        timestamp: Date.now(),
+        costSaved: formatted.costSaved,
+        complexity: formatted.complexity,
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Something went wrong. Please try again.";
+      setError(msg);
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: "assistant",
+          content: msg,
+        },
+      ]);
+    } finally {
+      setIsLoading(false);
+      setInput("");
+    }
+  };
+
+  const handleSend = () => {
+    const q = input.trim();
+    if (!q || isLoading) return;
+    executeQuery(q);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -97,16 +309,24 @@ export default function ChatInterface({}: ChatInterfaceProps) {
     }
   };
 
-  const handleExampleClick = (q: string) => {
-    setInput(q);
+  const toggleSql = (id: string) => {
+    setExpandedSql((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
   };
+
+  // Empty state check
+  const showEmptyState = messages.length === 0 && !isLoading;
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden animate-fade-in">
       {/* Header */}
-      <div className="px-6 lg:px-8 py-4 border-b border-border bg-surface/50 backdrop-blur-sm">
+      <div className="px-6 lg:px-8 py-3 border-b border-border bg-surface/50 backdrop-blur-sm flex-shrink-0">
         <div className="flex items-center gap-2">
-          <MessageIcon className="w-4 h-4 text-primary" />
+          <SparklesIcon className="w-4 h-4 text-primary" />
           <h1 className="text-base font-heading font-semibold text-foreground">Chat Assistant</h1>
           <span className="text-[10px] px-2 py-0.5 rounded-full bg-primary/10 text-primary font-medium ml-2">NL-to-SQL</span>
         </div>
@@ -115,219 +335,441 @@ export default function ChatInterface({}: ChatInterfaceProps) {
         </p>
       </div>
 
-      {/* Messages */}
-      <div className="flex-1 overflow-y-auto px-6 lg:px-8 py-6 space-y-6">
-        {messages.length === 0 && !isLoading && (
-          <div className="flex flex-col items-center justify-center h-full text-center py-12">
-            <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-primary/20 to-secondary/20 flex items-center justify-center mb-4">
+      {/* Messages area */}
+      <div className="flex-1 overflow-y-auto px-4 lg:px-8 py-6">
+        {showEmptyState ? (
+          /* ── ChatGPT-style empty state ── */
+          <div className="flex flex-col items-center justify-center h-full max-w-2xl mx-auto text-center">
+            <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-primary/20 to-secondary/20 flex items-center justify-center mb-5">
               <SparklesIcon className="w-8 h-8 text-primary" />
             </div>
-            <h2 className="text-lg font-heading font-semibold text-foreground mb-2">
-              Ask anything about your data
-            </h2>
-            <p className="text-sm text-foreground-muted max-w-md mb-6">
-              Type a question in natural language and let AI generate the SQL query for you.
-            </p>
 
-            {/* Example Questions */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-w-lg w-full">
-              {exampleQuestions.map((q, i) => (
-                <button
-                  key={i}
-                  onClick={() => handleExampleClick(q)}
-                  className="text-left p-3 glass-card rounded-lg text-xs text-foreground-muted hover:text-foreground hover:border-primary/30 transition-all duration-200 cursor-pointer"
-                >
-                  <LightbulbIcon className="w-3 h-3 text-primary inline mr-1.5 flex-shrink-0" />
-                  {q}
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {messages.map((msg, idx) => (
-          <div key={idx} className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
-            <div className={`max-w-[85%] ${msg.role === "user" ? "order-1" : "order-1"}`}>
-              {/* User message */}
-              {msg.role === "user" && (
-                <div className="bg-primary text-white px-4 py-2.5 rounded-2xl rounded-br-md text-sm shadow-lg shadow-primary/20">
-                  {msg.content}
+            {!hasDataset ? (
+              /* No dataset */
+              <>
+                <h2 className="text-lg font-heading font-semibold text-foreground mb-2">
+                  Upload a dataset to get started
+                </h2>
+                <p className="text-sm text-foreground-muted max-w-md mb-6">
+                  Upload a CSV or TSV file, then ask questions about your data in natural language.
+                </p>
+              </>
+            ) : (
+              /* Has dataset — show suggested prompts */
+              <>
+                <h2 className="text-lg font-heading font-semibold text-foreground mb-2">
+                  Ask anything about your data
+                </h2>
+                <p className="text-sm text-foreground-muted max-w-md mb-6">
+                  Type a question below or try one of these examples:
+                </p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 w-full max-w-lg">
+                  {SUGGESTED_PROMPTS.map((q, i) => (
+                    <button
+                      key={i}
+                      onClick={() => executeQuery(q)}
+                      className="text-left p-3 glass-card rounded-lg text-xs text-foreground-muted hover:text-foreground hover:border-primary/30 transition-all duration-200 cursor-pointer"
+                    >
+                      <LightbulbIcon className="w-3 h-3 text-primary inline mr-1.5 flex-shrink-0" />
+                      {q}
+                    </button>
+                  ))}
                 </div>
-              )}
+              </>
+            )}
+          </div>
+        ) : (
+          /* ── Messages ── */
+          <div className="max-w-4xl mx-auto space-y-6">
+            {messages.map((msg, idx) => (
+              <div key={idx} className="chat-enter">
+                {/* User message bubble */}
+                {msg.role === "user" && (
+                  <div className="flex justify-end mb-4">
+                    <div className="bg-primary text-white px-4 py-2.5 rounded-2xl rounded-br-md text-sm max-w-[70%] shadow-lg shadow-primary/20">
+                      {msg.content}
+                    </div>
+                  </div>
+                )}
 
-              {/* Assistant message */}
-              {msg.role === "assistant" && msg.result && (
-                <div className="space-y-3">
-                  <p className="text-sm text-foreground bg-surface-card px-4 py-2.5 rounded-2xl rounded-bl-md">
-                    {msg.content}
-                  </p>
+                {/* Error message */}
+                {msg.role === "assistant" && !msg.result && (
+                  <div className="flex items-start gap-3 mb-4">
+                    <div className="w-8 h-8 rounded-full bg-destructive/10 border border-destructive/20 flex items-center justify-center flex-shrink-0 mt-1">
+                      <CloseIcon className="w-4 h-4 text-destructive" />
+                    </div>
+                    <div className="glass-card rounded-xl p-4 border border-destructive/20 max-w-[80%]">
+                      <p className="text-xs font-medium text-destructive mb-1">Query Error</p>
+                      <p className="text-sm text-foreground">{msg.content}</p>
+                    </div>
+                  </div>
+                )}
 
-                  {/* Result Card */}
-                  <div className="glass-card rounded-xl overflow-hidden">
-                    {/* Generated SQL */}
-                    <div className="border-b border-border">
-                      <button
-                        onClick={() => setExpandedResult(expandedResult === msg.result!.id ? null : msg.result!.id)}
-                        className="w-full flex items-center justify-between px-4 py-3 hover:bg-surface-elevated transition-colors duration-150 cursor-pointer"
-                      >
-                        <div className="flex items-center gap-2">
-                          <SqlIcon className="w-4 h-4 text-primary" />
-                          <span className="text-sm font-medium text-foreground">Generated SQL</span>
-                        </div>
-                        <div className={`transform transition-transform duration-200 ${expandedResult === msg.result.id ? "rotate-180" : ""}`}>
-                          <svg className="w-4 h-4 text-foreground-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
-                          </svg>
-                        </div>
-                      </button>
-                      {expandedResult === msg.result.id && (
-                        <div className="px-4 pb-4">
-                          <pre className="text-xs font-mono bg-surface-elevated rounded-lg p-3 overflow-x-auto text-foreground border border-border">
-                            <code>{msg.result.generatedSql}</code>
-                          </pre>
-                          <div className="flex items-center gap-2 mt-2 text-[10px] text-foreground-muted/70">
-                            <span>Execution: {msg.result.executionTime}</span>
-                            <span>·</span>
-                            <span className="flex items-center gap-1">
-                              <CheckIcon className="w-3 h-3 text-success" />
-                              Validated
+                {/* Assistant result cards */}
+                {msg.result && (
+                  <div className="flex items-start gap-3 mb-4">
+                    <div className="w-8 h-8 rounded-full bg-primary/10 border border-primary/20 flex items-center justify-center flex-shrink-0 mt-1">
+                      <SqlIcon className="w-4 h-4 text-primary" />
+                    </div>
+                    <div className="flex-1 min-w-0 space-y-3">
+                      {/* ── CARD 1: Generated SQL ── */}
+                      <div className="glass-card rounded-xl overflow-hidden border border-border">
+                        <button
+                          onClick={() => toggleSql(msg.result!.id)}
+                          className="w-full flex items-center justify-between px-4 py-3 hover:bg-surface-elevated transition-colors duration-150 cursor-pointer"
+                        >
+                          <div className="flex items-center gap-2">
+                            <SqlIcon className="w-4 h-4 text-primary" />
+                            <span className="text-sm font-medium text-foreground">Generated SQL</span>
+                            <span className={`text-[10px] px-1.5 py-0.5 rounded font-mono ${
+                              msg.result.complexity === "simple" ? "bg-success/10 text-success" :
+                              msg.result.complexity === "moderate" ? "bg-warning/10 text-warning" :
+                              "bg-destructive/10 text-destructive"
+                            }`}>
+                              {msg.result.complexity}
                             </span>
                           </div>
-                        </div>
-                      )}
-                    </div>
+                          <div className="flex items-center gap-2">
+                            {/* Copy SQL */}
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                copyToClipboard(msg.result!.generatedSql);
+                                setCopiedSql(msg.result!.id);
+                                setTimeout(() => setCopiedSql(null), 2000);
+                              }}
+                              className="p-1.5 rounded-md text-foreground-muted hover:text-foreground hover:bg-surface-card transition-all cursor-pointer"
+                              title="Copy SQL"
+                            >
+                              {copiedSql === msg.result.id ? (
+                                <CheckIcon className="w-3.5 h-3.5 text-success" />
+                              ) : (
+                                <CopyIcon className="w-3.5 h-3.5" />
+                              )}
+                            </button>
+                            <div className={`transform transition-transform duration-200 ${expandedSql.has(msg.result.id) ? "" : "rotate-180"}`}>
+                              <svg className="w-4 h-4 text-foreground-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M5 15l7-7 7 7" />
+                              </svg>
+                            </div>
+                          </div>
+                        </button>
 
-                    {/* Results Table */}
-                    <div className="px-4 py-3 bg-surface-elevated/30">
-                      <div className="flex items-center gap-2 mb-3">
-                        <DatabaseIcon className="w-4 h-4 text-primary" />
-                        <span className="text-sm font-medium text-foreground">Query Results</span>
-                        <span className="text-[10px] text-foreground-muted/70 ml-auto">{msg.result.rows.length} rows</span>
+                        {expandedSql.has(msg.result.id) && (
+                          <div className="px-4 pb-4">
+                            <pre
+                              className="text-xs font-mono bg-surface rounded-lg p-3 overflow-x-auto border border-border leading-relaxed"
+                              dangerouslySetInnerHTML={{ __html: highlightSql(msg.result.generatedSql) }}
+                            />
+                            <div className="flex items-center gap-3 mt-2 text-[10px] text-foreground-muted/70">
+                              <span className="flex items-center gap-1">
+                                <CheckIcon className="w-3 h-3 text-success" />
+                                Validated
+                              </span>
+                              <span>·</span>
+                              <span>Execution: {msg.result.executionTime}</span>
+                            </div>
+                          </div>
+                        )}
                       </div>
-                      <div className="overflow-x-auto rounded-lg border border-border">
-                        <table className="w-full text-xs">
-                          <thead>
-                            <tr className="bg-surface-card">
-                              {msg.result.columns.map((col, ci) => (
-                                <th key={ci} className="px-3 py-2 text-left font-medium text-foreground-muted uppercase tracking-wider">
-                                  {col.replace(/_/g, " ")}
-                                </th>
-                              ))}
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {msg.result.rows.map((row, ri) => (
-                              <tr key={ri} className="border-t border-border hover:bg-surface-elevated/50 transition-colors">
-                                {msg.result!.columns.map((col, ci) => (
-                                  <td key={ci} className="px-3 py-2 text-foreground whitespace-nowrap">{row[col]}</td>
-                                ))}
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
-                    </div>
 
-                    {/* Routing & Cost Comparison */}
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-px bg-border">
-                      {/* AI Routing */}
-                      <div className="bg-surface p-4">
+                      {/* ── CARD 2: Explanation ── */}
+                      <div className="glass-card rounded-xl p-4 border border-border">
                         <div className="flex items-center gap-2 mb-2">
-                          <RouteIcon className="w-4 h-4 text-secondary" />
-                          <span className="text-xs font-medium text-foreground">Routing Decision</span>
+                          <LightbulbIcon className="w-4 h-4 text-warning" />
+                          <span className="text-xs font-medium text-foreground">Explanation</span>
                         </div>
-                        <div className="flex items-center gap-2">
-                          <div className="w-6 h-6 rounded-full bg-secondary/20 flex items-center justify-center">
-                            <BrainIcon className="w-3 h-3 text-secondary" />
+                        <p className="text-xs text-foreground-muted leading-relaxed">
+                          {msg.result.explanation}
+                        </p>
+                      </div>
+
+                      {/* ── CARD 3: Query Results Table ── */}
+                      <div className="glass-card rounded-xl overflow-hidden border border-border">
+                        <div className="px-4 py-3 bg-surface-elevated/30 border-b border-border">
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-2">
+                              <DatabaseIcon className="w-4 h-4 text-primary" />
+                              <span className="text-sm font-medium text-foreground">Query Results</span>
+                              <span className="text-[10px] text-foreground-muted/70 ml-2">
+                                {msg.result.rows.length} row{msg.result.rows.length !== 1 ? "s" : ""}
+                              </span>
+                            </div>
+                            {msg.result.rows.length > 0 && (
+                              <div className="flex items-center gap-1">
+                                <button
+                                  onClick={() => downloadCsv(
+                                    msg.result!.columns,
+                                    msg.result!.rows,
+                                    `querywise_export_${Date.now()}.csv`
+                                  )}
+                                  className="p-1.5 rounded-md text-foreground-muted hover:text-foreground hover:bg-surface-card transition-all cursor-pointer"
+                                  title="Export CSV"
+                                >
+                                  <CsvIcon className="w-3.5 h-3.5" />
+                                </button>
+                                <button
+                                  onClick={() => downloadJson(
+                                    msg.result!.columns,
+                                    msg.result!.rows,
+                                    `querywise_export_${Date.now()}.json`
+                                  )}
+                                  className="p-1.5 rounded-md text-foreground-muted hover:text-foreground hover:bg-surface-card transition-all cursor-pointer"
+                                  title="Export JSON"
+                                >
+                                  <JsonIcon className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+                            )}
                           </div>
-                          <span className="text-xs text-foreground">{msg.result.routingDecision}</span>
+                        </div>
+
+                        {msg.result.rows.length > 0 ? (
+                          <div className="p-0">
+                            <TableWithPagination result={msg.result} />
+                          </div>
+                        ) : (
+                          <div className="text-center py-6 text-xs text-foreground-muted/60">
+                            Query executed successfully but returned no rows.
+                          </div>
+                        )}
+                      </div>
+
+                      {/* ── CARD 4: Routing Decision + Cost ── */}
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        {/* Routing */}
+                        <div className="glass-card rounded-xl p-4 border border-border">
+                          <div className="flex items-center gap-2 mb-3">
+                            <RouteIcon className="w-4 h-4 text-secondary" />
+                            <span className="text-xs font-medium text-foreground">Routing Decision</span>
+                          </div>
+                          <div className="space-y-2">
+                            <div className="flex items-center justify-between text-xs">
+                              <span className="text-foreground-muted">Complexity</span>
+                              <span className={`px-2 py-0.5 rounded-full text-[10px] font-mono font-medium ${
+                                msg.result.complexity === "simple" ? "bg-success/10 text-success" :
+                                msg.result.complexity === "moderate" ? "bg-warning/10 text-warning" :
+                                "bg-destructive/10 text-destructive"
+                              }`}>
+                                {msg.result.complexity === "simple" ? "Simple" :
+                                 msg.result.complexity === "moderate" ? "Medium" : "Complex"}
+                              </span>
+                            </div>
+                            <div className="flex items-center justify-between text-xs">
+                              <span className="text-foreground-muted">Engine</span>
+                              <span className="text-foreground font-medium">{msg.result.routingLabel}</span>
+                            </div>
+                            <div className="flex items-center justify-between text-xs">
+                              <span className="text-foreground-muted">Reason</span>
+                              <span className="text-foreground-muted/70 text-right max-w-[60%]">
+                                {msg.result.complexity === "simple" ? "Single-table aggregation detected" :
+                                 msg.result.complexity === "moderate" ? "Multi-step analysis required" :
+                                 "Complex analytical query"}
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Cost Comparison */}
+                        <div className="glass-card rounded-xl p-4 border border-border">
+                          <div className="flex items-center gap-2 mb-3">
+                            <DollarIcon className="w-4 h-4 text-success" />
+                            <span className="text-xs font-medium text-foreground">Cost Comparison</span>
+                          </div>
+                          <div className="space-y-2">
+                            <div className="flex items-center justify-between text-xs">
+                              <span className="text-foreground-muted">Traditional AI</span>
+                              <span className="text-foreground-muted line-through font-mono">
+                                ${msg.result.traditionalCost.toFixed(3)}
+                              </span>
+                            </div>
+                            <div className="flex items-center justify-between text-xs">
+                              <span className="text-foreground-muted">QueryWise AI</span>
+                              <span className="text-success font-mono font-semibold">
+                                ${msg.result.estimatedCost.toFixed(3)}
+                              </span>
+                            </div>
+                            <div className="border-t border-border pt-2 mt-2">
+                              <div className="flex items-center justify-between">
+                                <span className="text-xs text-foreground-muted">Savings</span>
+                                <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-success/15 text-success text-xs font-semibold">
+                                  <TrendingUpIcon className="w-3 h-3" />
+                                  {msg.result.costSaved}%
+                                </span>
+                              </div>
+                            </div>
+                          </div>
                         </div>
                       </div>
 
-                      {/* Cost Comparison */}
-                      <div className="bg-surface p-4">
-                        <div className="flex items-center gap-2 mb-2">
-                          <DollarIcon className="w-4 h-4 text-success" />
-                          <span className="text-xs font-medium text-foreground">Cost Comparison</span>
-                        </div>
-                        <div className="flex items-center gap-3">
-                          <div className="text-center">
-                            <p className="text-[10px] text-foreground-muted mb-0.5">Traditional</p>
-                            <p className="text-sm font-mono font-semibold text-foreground-muted line-through">
-                              ${msg.result.costComparison.traditionalCost.toFixed(2)}
-                            </p>
-                          </div>
-                          <div className="text-center">
-                            <p className="text-[10px] text-foreground-muted mb-0.5">AI Cost</p>
-                            <p className="text-sm font-mono font-semibold text-success">
-                              ${msg.result.costComparison.aiCost.toFixed(2)}
-                            </p>
-                          </div>
-                          <div className="ml-auto text-center">
-                            <p className="text-[10px] text-foreground-muted mb-0.5">Savings</p>
-                            <p className="text-xs font-semibold text-success">
-                              {Math.round((1 - msg.result.costComparison.aiCost / msg.result.costComparison.traditionalCost) * 100)}%
-                            </p>
-                          </div>
-                        </div>
+                      {/* ── Execution Metrics ── */}
+                      <div className="flex flex-wrap items-center gap-2 text-[10px] text-foreground-muted/70">
+                        <span className="px-2 py-0.5 rounded bg-surface-elevated">
+                          ⚡ {msg.result.executionTime}
+                        </span>
+                        <span className="px-2 py-0.5 rounded bg-surface-elevated">
+                          📊 {msg.result.rowsReturned} rows
+                        </span>
+                        <span className="px-2 py-0.5 rounded bg-surface-elevated">
+                          🧠 {msg.result.estimatedTokens} tokens
+                        </span>
+                        <span className="px-2 py-0.5 rounded bg-surface-elevated">
+                          💰 ${msg.result.estimatedCost.toFixed(3)}
+                        </span>
                       </div>
                     </div>
                   </div>
-                </div>
-              )}
-            </div>
-          </div>
-        ))}
-
-        {/* Loading */}
-        {isLoading && (
-          <div className="flex items-start gap-3">
-            <div className="w-8 h-8 rounded-full bg-surface-card border border-border flex items-center justify-center">
-              <LoaderIcon className="w-4 h-4 text-primary" />
-            </div>
-            <div className="space-y-2">
-              <div className="flex gap-1.5">
-                <div className="w-2 h-2 rounded-full bg-primary/40 animate-bounce" style={{ animationDelay: "0ms" }} />
-                <div className="w-2 h-2 rounded-full bg-primary/40 animate-bounce" style={{ animationDelay: "150ms" }} />
-                <div className="w-2 h-2 rounded-full bg-primary/40 animate-bounce" style={{ animationDelay: "300ms" }} />
+                )}
               </div>
-              <p className="text-xs text-foreground-muted/70">Generating SQL and analyzing data...</p>
-            </div>
+            ))}
+
+            {/* ── Loading indicator with step text ── */}
+            {isLoading && (
+              <div className="flex items-start gap-3 chat-enter">
+                <div className="w-8 h-8 rounded-full bg-surface-card border border-border flex items-center justify-center flex-shrink-0">
+                  <LoaderIcon className="w-4 h-4 text-primary" />
+                </div>
+                <div className="glass-card rounded-xl px-4 py-3 border border-primary/20">
+                  <div className="flex items-center gap-2">
+                    <div className="flex gap-1">
+                      <div className="w-2 h-2 rounded-full bg-primary/40 animate-bounce" style={{ animationDelay: "0ms" }} />
+                      <div className="w-2 h-2 rounded-full bg-primary/40 animate-bounce" style={{ animationDelay: "150ms" }} />
+                      <div className="w-2 h-2 rounded-full bg-primary/40 animate-bounce" style={{ animationDelay: "300ms" }} />
+                    </div>
+                    <span className="text-xs text-foreground-muted">{LOADING_STEPS[loadingStep]}</span>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            <div ref={messagesEndRef} />
           </div>
         )}
       </div>
 
-      {/* Input */}
-      <div className="px-6 lg:px-8 py-4 border-t border-border bg-surface/50 backdrop-blur-sm">
-        <div className="flex items-end gap-3 max-w-4xl mx-auto">
-          <div className="flex-1 relative">
+      {/* ── Input bar (ChatGPT-style) ── */}
+      <div className="flex-shrink-0 px-4 lg:px-8 py-3 border-t border-border bg-surface/50 backdrop-blur-sm">
+        <div className="max-w-3xl mx-auto">
+          <div className="flex items-end gap-2 bg-surface-card border border-border rounded-2xl px-4 py-3 focus-within:ring-2 focus-within:ring-primary/30 focus-within:border-primary transition-all duration-200 shadow-sm">
             <textarea
+              ref={inputRef}
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
-              placeholder="Ask a question about your data..."
+              placeholder={hasDataset ? "Ask a question about your data..." : "Upload a dataset first to start querying..."}
               rows={1}
-              className="w-full px-4 py-3 pr-12 bg-surface-card border border-border rounded-xl text-sm text-foreground placeholder:text-foreground-muted/50 focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary resize-none transition-all duration-200"
-              style={{ minHeight: "44px", maxHeight: "120px" }}
+              disabled={!hasDataset}
+              className="flex-1 bg-transparent text-sm text-foreground placeholder:text-foreground-muted/40 focus:outline-none resize-none max-h-32"
+              style={{ minHeight: "24px" }}
               onInput={(e) => {
                 const target = e.target as HTMLTextAreaElement;
-                target.style.height = "44px";
-                target.style.height = Math.min(target.scrollHeight, 120) + "px";
+                target.style.height = "24px";
+                target.style.height = Math.min(target.scrollHeight, 128) + "px";
               }}
             />
+            <button
+              onClick={handleSend}
+              disabled={!input.trim() || isLoading || !hasDataset}
+              className="flex-shrink-0 w-9 h-9 rounded-xl bg-primary text-white flex items-center justify-center hover:bg-primary-hover active:scale-[0.92] disabled:opacity-30 disabled:cursor-not-allowed disabled:active:scale-100 transition-all duration-150 cursor-pointer shadow-md shadow-primary/20"
+            >
+              <SendIcon className="w-4 h-4" />
+            </button>
           </div>
-          <button
-            onClick={handleSend}
-            disabled={!input.trim() || isLoading}
-            className="flex-shrink-0 w-11 h-11 rounded-xl bg-primary text-white flex items-center justify-center hover:bg-primary-hover active:scale-[0.95] disabled:opacity-40 disabled:cursor-not-allowed disabled:active:scale-100 transition-all duration-150 cursor-pointer shadow-lg shadow-primary/20"
-          >
-            <SendIcon className="w-4.5 h-4.5" />
-          </button>
+          <p className="text-center text-[10px] text-foreground-muted/30 mt-2">
+            Powered by QueryWise Intelligent SQL Engine · DuckDB
+          </p>
         </div>
-        <p className="text-center text-[10px] text-foreground-muted/40 mt-2">
-          QueryWise generates SQL from your natural language · Results are simulated for demo
-        </p>
       </div>
+    </div>
+  );
+}
+
+// ── Table with Pagination ──────────────────────────────────
+
+function TableWithPagination({ result }: { result: FormattedResult }) {
+  const [page, setPage] = useState(0);
+  const perPage = 10;
+  const totalPages = Math.max(1, Math.ceil(result.rows.length / perPage));
+
+  const currentRows = useMemo(() => {
+    const start = page * perPage;
+    return result.rows.slice(start, start + perPage);
+  }, [result.rows, page]);
+
+  // Reset page when result changes
+  useEffect(() => {
+    setPage(0);
+  }, [result.id]);
+
+  return (
+    <div>
+      <div className="table-wrapper">
+        <table className="w-full text-xs">
+          <thead>
+            <tr className="bg-surface-card">
+              {result.columns.map((col, ci) => (
+                <th key={ci} className="sticky top-0 px-3 py-2.5 text-left font-medium text-foreground-muted uppercase tracking-wider whitespace-nowrap bg-surface-card border-b border-border">
+                  {col.replace(/_/g, " ")}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {currentRows.map((row, ri) => (
+              <tr
+                key={ri}
+                className={`border-b border-border/50 transition-colors duration-100 ${
+                  ri % 2 === 0 ? "bg-surface-elevated/10" : "bg-transparent"
+                } hover:bg-surface-elevated/30`}
+              >
+                {result.columns.map((col, ci) => (
+                  <td key={ci} className="px-3 py-2 text-foreground whitespace-nowrap">
+                    {row[col] ?? ""}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {/* Pagination */}
+      {totalPages > 1 && (
+        <div className="flex items-center justify-between px-4 py-2 border-t border-border bg-surface-elevated/20">
+          <span className="text-[10px] text-foreground-muted/60">
+            Showing {page * perPage + 1}–{Math.min((page + 1) * perPage, result.rows.length)} of {result.rows.length}
+          </span>
+          <div className="flex items-center gap-1">
+            <button
+              onClick={() => setPage(Math.max(0, page - 1))}
+              disabled={page === 0}
+              className="px-2 py-1 rounded text-xs text-foreground-muted hover:text-foreground hover:bg-surface-card disabled:opacity-30 disabled:cursor-not-allowed transition-all cursor-pointer"
+            >
+              ← Prev
+            </button>
+            {Array.from({ length: totalPages }, (_, i) => (
+              <button
+                key={i}
+                onClick={() => setPage(i)}
+                className={`min-w-[26px] h-7 rounded-md text-[11px] font-medium transition-all duration-150 cursor-pointer ${
+                  i === page
+                    ? "bg-primary text-white shadow-sm"
+                    : "text-foreground-muted hover:text-foreground hover:bg-surface-card"
+                }`}
+              >
+                {i + 1}
+              </button>
+            ))}
+            <button
+              onClick={() => setPage(Math.min(totalPages - 1, page + 1))}
+              disabled={page >= totalPages - 1}
+              className="px-2 py-1 rounded text-xs text-foreground-muted hover:text-foreground hover:bg-surface-card disabled:opacity-30 disabled:cursor-not-allowed transition-all cursor-pointer"
+            >
+              Next →
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
